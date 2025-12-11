@@ -1,0 +1,42 @@
+name: Approve PR by comment (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      commenter:
+        required: true
+        type: string
+      comment_body:
+        required: true
+        type: string
+      pull_number:
+        required: true
+        type: number
+
+# IMPORTANT: this grants the token the ability to create PR reviews
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  approve:
+    name: Approve when -APPROVE- by stevenjmarsh
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Approve PR via REST API
+        # Only approve if the commenter is exactly 'stevenjmarsh' AND body is exactly '-APPROVE-'
+        if: ${{ inputs.commenter == 'stevenjmarsh' && inputs.comment_body == '-APPROVE-' }}
+        env:
+          GH_OWNER_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pull_number }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER_REPO}/pulls/${PR_NUMBER}/reviews" \
+            -d '{"event":"APPROVE","body":"Approved by -APPROVE- comment from stevenjmarsh"}' \
+            | jq -r '.id' >/dev/null
+          echo "✅ Approved PR #${PR_NUMBER}"
