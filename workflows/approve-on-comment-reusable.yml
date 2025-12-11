@@ -13,9 +13,10 @@ on:
         required: true
         type: number
 
-# IMPORTANT: this grants the token the ability to create PR reviews
+# Need write to PRs to approve; write to Issues to create comment & reaction
 permissions:
   pull-requests: write
+  issues: write
   contents: read
 
 jobs:
@@ -23,14 +24,14 @@ jobs:
     name: Approve when -APPROVE- by stevenjmarsh
     runs-on: ubuntu-latest
 
+    env:
+      GH_OWNER_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ inputs.pull_number }}
+      TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
       - name: Approve PR via REST API
-        # Only approve if the commenter is exactly 'stevenjmarsh' AND body is exactly '-APPROVE-'
         if: ${{ inputs.commenter == 'stevenjmarsh' && inputs.comment_body == '-APPROVE-' }}
-        env:
-          GH_OWNER_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ inputs.pull_number }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           curl -sS -X POST \
@@ -40,3 +41,40 @@ jobs:
             -d '{"event":"APPROVE","body":"Approved by -APPROVE- comment from stevenjmarsh"}' \
             | jq -r '.id' >/dev/null
           echo "✅ Approved PR #${PR_NUMBER}"
+
+      - name: Leave confirming comment on the PR
+        id: confirm_comment
+        if: ${{ inputs.commenter == 'stevenjmarsh' && inputs.comment_body == '-APPROVE-' }}
+        run: |
+          set -euo pipefail
+          body=$(
+            jq -rn --arg pr "#${PR_NUMBER}" '
+              "✅ Approved " + $pr + " via -APPROVE- from @stevenjmarsh"
+            '
+          )
+          response="$(
+            curl -sS -X POST \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GH_OWNER_REPO}/issues/${PR_NUMBER}/comments" \
+              -d "{\"body\":$(
+                    jq -Rn --arg b "$body" '$b'
+                  )}"
+          )"
+          comment_id="$(jq -r '.id' <<<"$response")"
+          echo "comment_id=${comment_id}" >> "$GITHUB_OUTPUT"
+          echo "📝 Posted confirmation comment id ${comment_id}"
+
+      - name: Add 👍 reaction to the confirmation comment
+        if: ${{ inputs.commenter == 'stevenjmarsh' && inputs.comment_body == '-APPROVE-' && steps.confirm_comment.outputs.comment_id }}
+        env:
+          COMMENT_ID: ${{ steps.confirm_comment.outputs.comment_id }}
+        run: |
+          set -euo pipefail
+          curl -sS -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GH_OWNER_REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -d '{"content":"+1"}' \
+            >/dev/null
+          echo "👍 Added reaction to confirmation comment ${COMMENT_ID}"
